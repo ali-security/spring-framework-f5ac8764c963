@@ -16,6 +16,7 @@
 
 package org.springframework.expression.spel;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -36,6 +37,7 @@ import org.springframework.expression.spel.support.SimpleEvaluationContext;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.expression.spel.testresources.Inventor;
 import org.springframework.expression.spel.testresources.Person;
+import org.springframework.util.ClassUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
@@ -187,8 +189,42 @@ public class PropertyAccessTests extends AbstractExpressionTests {
 		target.setName("p2");
 		assertThat(expr.getValue(context, target)).isEqualTo("p2");
 
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> parser.parseExpression("nonexistent").getValue(context, target))
+				.satisfies(ex -> assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.PROPERTY_OR_FIELD_NOT_READABLE));
+
+		Method getInvalid = ClassUtils.getMethod(Person.class, "getInvalid");
+		assertThat(getInvalid.getReturnType()).isEqualTo(void.class);
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> parser.parseExpression("invalid").getValue(context, target))
+				.satisfies(ex -> assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.PROPERTY_OR_FIELD_NOT_READABLE));
+
 		assertThatExceptionOfType(SpelEvaluationException.class).isThrownBy(() ->
 				parser.parseExpression("name='p3'").getValue(context, target));
+	}
+
+	@Test
+	void voidReturningMethodIsNotTreatedAsPropertyGetter() {
+		VoidAccessorTarget target = new VoidAccessorTarget();
+
+		// A void-returning method must never be selected as a property getter, since
+		// reading such a "property" would invoke the method purely for its side effects.
+		assertVoidMethodsAreNotReadable(SimpleEvaluationContext.forReadOnlyDataBinding().build(), target);
+		assertVoidMethodsAreNotReadable(new StandardEvaluationContext(), target);
+
+		assertThat(target.invocations).isEmpty();
+	}
+
+	private void assertVoidMethodsAreNotReadable(EvaluationContext context, VoidAccessorTarget target) {
+		// "get"-prefixed void method: getInvalid()
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> parser.parseExpression("invalid").getValue(context, target))
+				.satisfies(ex -> assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.PROPERTY_OR_FIELD_NOT_READABLE));
+
+		// Plain void method: shutdown()
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> parser.parseExpression("shutdown").getValue(context, target))
+				.satisfies(ex -> assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.PROPERTY_OR_FIELD_NOT_READABLE));
 	}
 
 	@Test
@@ -263,6 +299,22 @@ public class PropertyAccessTests extends AbstractExpressionTests {
 		assertThatExceptionOfType(SpelEvaluationException.class)
 			.isThrownBy(() -> expression.getValue(context, new Inventor()))
 			.satisfies(ex -> assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.ARRAY_INDEX_OUT_OF_BOUNDS));
+	}
+
+
+	// Records every invocation, so that a void-returning method being mistaken for a
+	// property getter can be detected via the side effect it would have triggered.
+	static class VoidAccessorTarget {
+
+		final List<String> invocations = new ArrayList<>();
+
+		public void getInvalid() {
+			this.invocations.add("getInvalid");
+		}
+
+		public void shutdown() {
+			this.invocations.add("shutdown");
+		}
 	}
 
 
