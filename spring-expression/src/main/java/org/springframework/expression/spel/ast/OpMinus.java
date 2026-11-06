@@ -59,6 +59,7 @@ public class OpMinus extends Operator {
 		if (this.children.length < 2) {  // if only one operand, then this is unary minus
 			Object operand = leftOp.getValueInternal(state).getValue();
 			if (operand instanceof Number) {
+				state.trackOperation();
 				if (operand instanceof BigDecimal) {
 					return new TypedValue(((BigDecimal) operand).negate());
 				}
@@ -101,6 +102,7 @@ public class OpMinus extends Operator {
 		if (left instanceof Number && right instanceof Number) {
 			Number leftNumber = (Number) left;
 			Number rightNumber = (Number) right;
+			state.trackOperation();
 
 			if (leftNumber instanceof BigDecimal || rightNumber instanceof BigDecimal) {
 				BigDecimal leftBigDecimal = NumberUtils.convertNumberToTargetClass(leftNumber, BigDecimal.class);
@@ -137,6 +139,7 @@ public class OpMinus extends Operator {
 		if (left instanceof String && right instanceof Integer && ((String) left).length() == 1) {
 			String theString = (String) left;
 			Integer theInteger = (Integer) right;
+			state.trackOperation();
 			// Implements character - int (ie. b - 1 = a)
 			return new TypedValue(Character.toString((char) (theString.charAt(0) - theInteger)));
 		}

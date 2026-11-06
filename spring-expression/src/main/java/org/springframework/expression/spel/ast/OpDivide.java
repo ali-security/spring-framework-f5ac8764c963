@@ -52,6 +52,7 @@ public class OpDivide extends Operator {
 		if (leftOperand instanceof Number && rightOperand instanceof Number) {
 			Number leftNumber = (Number) leftOperand;
 			Number rightNumber = (Number) rightOperand;
+			state.trackOperation();
 
 			if (leftNumber instanceof BigDecimal || rightNumber instanceof BigDecimal) {
 				BigDecimal leftBigDecimal = NumberUtils.convertNumberToTargetClass(leftNumber, BigDecimal.class);

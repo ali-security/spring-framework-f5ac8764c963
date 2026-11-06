@@ -91,6 +91,7 @@ public class VariableReference extends SpelNodeImpl {
 
 	@Override
 	public void setValue(ExpressionState state, @Nullable Object value) throws SpelEvaluationException {
+		state.trackOperation();
 		state.setVariable(this.name, value);
 	}
 

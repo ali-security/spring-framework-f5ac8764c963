@@ -50,6 +50,7 @@ public class OperatorPower extends Operator {
 		if (leftOperand instanceof Number && rightOperand instanceof Number) {
 			Number leftNumber = (Number) leftOperand;
 			Number rightNumber = (Number) rightOperand;
+			state.trackOperation();
 
 			if (leftNumber instanceof BigDecimal) {
 				BigDecimal leftBigDecimal = NumberUtils.convertNumberToTargetClass(leftNumber, BigDecimal.class);

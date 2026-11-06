@@ -22,9 +22,11 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.StringJoiner;
 
 import org.junit.jupiter.api.Test;
 
+import org.springframework.core.SpringProperties;
 import org.springframework.core.convert.TypeDescriptor;
 import org.springframework.expression.AccessException;
 import org.springframework.expression.BeanResolver;
@@ -38,6 +40,7 @@ import org.springframework.expression.MethodResolver;
 import org.springframework.expression.ParseException;
 import org.springframework.expression.spel.standard.SpelExpression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
+import org.springframework.expression.spel.support.SimpleEvaluationContext;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.expression.spel.support.StandardTypeLocator;
 import org.springframework.expression.spel.testresources.TestPerson;
@@ -46,6 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.within;
+import static org.springframework.expression.spel.SpelParserConfiguration.SPRING_EXPRESSION_MAX_OPERATIONS_PROPERTY_NAME;
 
 /**
  * Tests the evaluation of real expressions in a real context.
@@ -91,6 +95,147 @@ public class EvaluationTests extends AbstractExpressionTests {
 		expression = String.format("'%s'", repeat("Y", 25_000));
 		assertThat(expression).hasSize(25_002);
 		evaluateAndCheckError(parser, expression, String.class, SpelMessage.MAX_EXPRESSION_LENGTH_EXCEEDED);
+	}
+
+	@Test
+	void maxOperationsIsConfigurableViaSpelParserConfiguration() {
+		int maxLength = 100;
+		int maxOperations = 10;
+
+		ExpressionParser parser = new SpelExpressionParser();
+
+		// The following expression contains 10 tracked operations:
+		String expression = "('foo' + 'bar').length() >= 6 && {1, 1 + 1, 3}.contains(3)";
+		Expression expr1 = parser.parseExpression(expression);
+		assertThat(expr1.getValue(Boolean.class)).isTrue();
+
+		SpelParserConfiguration configuration =
+				new SpelParserConfiguration(SpelCompilerMode.OFF, null, false, false, 0, maxLength, maxOperations);
+		parser = new SpelExpressionParser(configuration);
+		Expression expr2 = parser.parseExpression(expression);
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> expr2.getValue(Boolean.class))
+				.satisfies(ex -> {
+					assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.MAX_OPERATIONS_EXCEEDED);
+					assertThat(ex.getInserts()).as("inserts").containsExactly(maxOperations);
+				});
+	}
+
+	@Test
+	void maxOperationsIsConfigurableViaSpringProperty() {
+		int maxOperations = 10;
+
+		ExpressionParser parser = new SpelExpressionParser();
+
+		// The following expression contains 10 tracked operations:
+		String expression = "('foo' + 'bar').length() >= 6 && {1, 1 + 1, 3}.contains(3)";
+		Expression expr1 = parser.parseExpression(expression);
+		assertThat(expr1.getValue(Boolean.class)).isTrue();
+
+		try {
+			SpringProperties.setProperty(SPRING_EXPRESSION_MAX_OPERATIONS_PROPERTY_NAME, "" + maxOperations);
+
+			parser = new SpelExpressionParser();
+			Expression expr2 = parser.parseExpression(expression);
+			assertThatExceptionOfType(SpelEvaluationException.class)
+					.isThrownBy(() -> expr2.getValue(Boolean.class))
+					.satisfies(ex -> {
+						assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.MAX_OPERATIONS_EXCEEDED);
+						assertThat(ex.getInserts()).as("inserts").containsExactly(maxOperations);
+					});
+		}
+		finally {
+			SpringProperties.setProperty(SPRING_EXPRESSION_MAX_OPERATIONS_PROPERTY_NAME, null);
+		}
+	}
+
+	@Test
+	void maxOperationsConfiguredViaSpelParserConfigurationOverridesSpringProperty() {
+		int maxLength = 100;
+		int maxOperations = 10;
+
+		ExpressionParser parser = new SpelExpressionParser();
+
+		// The following expression contains 10 tracked operations:
+		String expression = "('foo' + 'bar').length() >= 6 && {1, 1 + 1, 3}.contains(3)";
+		Expression expr1 = parser.parseExpression(expression);
+		assertThat(expr1.getValue(Boolean.class)).isTrue();
+
+		try {
+			SpringProperties.setProperty(SPRING_EXPRESSION_MAX_OPERATIONS_PROPERTY_NAME, "" + maxOperations / 2);
+
+			// maxOperations + 1 should override maxOperations / 2
+			SpelParserConfiguration configuration =
+					new SpelParserConfiguration(SpelCompilerMode.OFF, null, false, false, 0, maxLength, maxOperations + 1);
+			parser = new SpelExpressionParser(configuration);
+			expr1 = parser.parseExpression(expression);
+			assertThat(expr1.getValue(Boolean.class)).isTrue();
+
+			configuration = new SpelParserConfiguration(SpelCompilerMode.OFF, null, false, false, 0, maxLength, maxOperations);
+			parser = new SpelExpressionParser(configuration);
+			Expression expr2 = parser.parseExpression(expression);
+			assertThatExceptionOfType(SpelEvaluationException.class)
+					.isThrownBy(() -> expr2.getValue(Boolean.class))
+					.satisfies(ex -> {
+						assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.MAX_OPERATIONS_EXCEEDED);
+						// Should fail due to maxOperations, not maxOperations / 2
+						assertThat(ex.getInserts()).as("inserts").containsExactly(maxOperations);
+					});
+		}
+		finally {
+			SpringProperties.setProperty(SPRING_EXPRESSION_MAX_OPERATIONS_PROPERTY_NAME, null);
+		}
+	}
+
+	@Test
+	void maxOperationsLimitsNestedProjectionByDefault() {
+		String list = inlineListOfSize(50);
+		// 50 * 50 * 50 = 125,000 projected elements
+		String expression = list + ".![" + list + ".![" + list + ".![#this]]]";
+		Expression expr = new SpelExpressionParser().parseExpression(expression);
+		EvaluationContext context = SimpleEvaluationContext.forReadOnlyDataBinding().build();
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> expr.getValue(context))
+				.satisfies(ex -> {
+					assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.MAX_OPERATIONS_EXCEEDED);
+					assertThat(ex.getInserts()).containsExactly(SpelParserConfiguration.DEFAULT_MAX_OPERATIONS);
+				});
+	}
+
+	@Test
+	void maxOperationsLimitsNestedSelectionByDefault() {
+		String list = inlineListOfSize(50);
+		// 50 * 50 * 50 = 125,000 selection criteria evaluations
+		String expression = list + ".?[" + list + ".?[" + list + ".?[true] != null] != null]";
+		Expression expr = new SpelExpressionParser().parseExpression(expression);
+		EvaluationContext context = SimpleEvaluationContext.forReadOnlyDataBinding().build();
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> expr.getValue(context))
+				.satisfies(ex -> {
+					assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.MAX_OPERATIONS_EXCEEDED);
+					assertThat(ex.getInserts()).containsExactly(SpelParserConfiguration.DEFAULT_MAX_OPERATIONS);
+				});
+	}
+
+	@Test
+	void maxOperationsLimitsLargeInlineListLiteralByDefault() {
+		String expression = inlineListOfSize(12_000);
+		SpelParserConfiguration configuration = new SpelParserConfiguration(null, null, false, false, 0, 100_000);
+		Expression expr = new SpelExpressionParser(configuration).parseExpression(expression);
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> expr.getValue())
+				.satisfies(ex -> {
+					assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.MAX_OPERATIONS_EXCEEDED);
+					assertThat(ex.getInserts()).containsExactly(SpelParserConfiguration.DEFAULT_MAX_OPERATIONS);
+				});
+	}
+
+	private static String inlineListOfSize(int size) {
+		StringJoiner sj = new StringJoiner(",", "{", "}");
+		for (int i = 0; i < size; i++) {
+			sj.add(String.valueOf(i % 10));
+		}
+		return sj.toString();
 	}
 
 	@Test

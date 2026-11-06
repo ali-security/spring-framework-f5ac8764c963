@@ -100,6 +100,7 @@ public class ConstructorReference extends SpelNodeImpl {
 	 */
 	@Override
 	public TypedValue getValueInternal(ExpressionState state) throws EvaluationException {
+		state.trackOperation();
 		if (this.isArrayConstructor) {
 			return createArray(state);
 		}
