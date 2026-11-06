@@ -26,6 +26,7 @@ import org.springframework.expression.spel.ast.Operator;
 import org.springframework.expression.spel.standard.SpelExpression;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.expression.spel.SpelMessage.MAX_CONCATENATED_STRING_LENGTH_EXCEEDED;
 import static org.springframework.expression.spel.SpelMessage.MAX_REPEATED_TEXT_SIZE_EXCEEDED;
 
 /**
@@ -608,6 +609,59 @@ public class OperatorTests extends AbstractExpressionTests {
 	@Test
 	void stringRepeatWithEmptyTextAndLargeCount() {
 		evaluate("'' * 2147483647", "", String.class);
+	}
+
+	@Test
+	void stringConcatenation() {
+		evaluate("'' + ''", "", String.class);
+		evaluate("'' + null", "null", String.class);
+		evaluate("null + ''", "null", String.class);
+		evaluate("'ab' + null", "abnull", String.class);
+		evaluate("null + 'ab'", "nullab", String.class);
+		evaluate("'ab' + 2", "ab2", String.class);
+		evaluate("2 + 'ab'", "2ab", String.class);
+		evaluate("'abc' + 'def'", "abcdef", String.class);
+
+		// Text is big but not too big
+		final int maxSize = 100_000;
+		context.setVariable("text1", createString(maxSize));
+		Expression expr = parser.parseExpression("#text1 + ''");
+		assertThat(expr.getValue(context, String.class)).hasSize(maxSize);
+
+		expr = parser.parseExpression("'' + #text1");
+		assertThat(expr.getValue(context, String.class)).hasSize(maxSize);
+
+		context.setVariable("text1", createString(maxSize / 2));
+		expr = parser.parseExpression("#text1 + #text1");
+		assertThat(expr.getValue(context, String.class)).hasSize(maxSize);
+
+		// Text is too big
+		context.setVariable("text1", createString(maxSize + 1));
+		evaluateAndCheckError("#text1 + ''", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 7);
+		evaluateAndCheckError("#text1 + true", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 7);
+		evaluateAndCheckError("'' + #text1", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 3);
+		evaluateAndCheckError("true + #text1", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 5);
+
+		context.setVariable("text1", createString(maxSize / 2));
+		context.setVariable("text2", createString((maxSize / 2) + 1));
+		evaluateAndCheckError("#text1 + #text2", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 7);
+		evaluateAndCheckError("#text1 + #text2 + true", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 7);
+		evaluateAndCheckError("#text1 + true + #text2", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 14);
+		evaluateAndCheckError("true + #text1 + #text2", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 14);
+
+		evaluateAndCheckError("#text2 + #text1", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 7);
+		evaluateAndCheckError("#text2 + #text1 + true", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 7);
+		evaluateAndCheckError("#text2 + true + #text1", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 14);
+		evaluateAndCheckError("true + #text2 + #text1", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 14);
+
+		context.setVariable("text1", createString((maxSize / 3) + 1));
+		evaluateAndCheckError("#text1 + #text1 + #text1", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 16);
+		evaluateAndCheckError("(#text1 + #text1) + #text1", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 18);
+		evaluateAndCheckError("#text1 + (#text1 + #text1)", String.class, MAX_CONCATENATED_STRING_LENGTH_EXCEEDED, 7);
+	}
+
+	private static String createString(int size) {
+		return new String(new char[size]);
 	}
 
 	@Test
