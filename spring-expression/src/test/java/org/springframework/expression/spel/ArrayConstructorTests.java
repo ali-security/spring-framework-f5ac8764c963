@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2022 the original author or authors.
+ * Copyright 2002-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,20 @@ package org.springframework.expression.spel;
 
 import org.junit.jupiter.api.Test;
 
+import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
+import org.springframework.expression.spel.support.SimpleEvaluationContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 /**
  * Test construction of arrays.
  *
  * @author Andy Clement
  * @author Sam Brannen
+ * @author Juergen Hoeller
  */
 public class ArrayConstructorTests extends AbstractExpressionTests {
 
@@ -131,6 +135,28 @@ public class ArrayConstructorTests extends AbstractExpressionTests {
 		evaluate("new String[3][2][1]",
 			"[[Ljava.lang.String;[3]{[2]{[1]{null},[1]{null}},[2]{[1]{null},[1]{null}},[2]{[1]{null},[1]{null}}}",
 			String[][][].class);
+	}
+
+	@Test
+	public void noArrayConstruction() {
+		EvaluationContext context = SimpleEvaluationContext.forReadWriteDataBinding().build();
+		assertThatExceptionOfType(SpelEvaluationException.class).isThrownBy(() ->
+				parser.parseExpression("new int[2]").getValue(context));
+	}
+
+	@Test
+	public void noArrayConstructionWithSimpleEvaluationContext() {
+		EvaluationContext readWrite = SimpleEvaluationContext.forReadWriteDataBinding().build();
+		EvaluationContext readOnly = SimpleEvaluationContext.forReadOnlyDataBinding().build();
+		String[] expressions = {"new int[2]", "new int[2][2]", "new int[]{1,2,3}", "new String[2]",
+				"new java.lang.String[3][4]", "new long[262143]", "new int[511][512]"};
+		for (EvaluationContext context : new EvaluationContext[] {readWrite, readOnly}) {
+			for (String expression : expressions) {
+				assertThatExceptionOfType(SpelEvaluationException.class)
+						.isThrownBy(() -> parser.parseExpression(expression).getValue(context))
+						.satisfies(ex -> assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.CONSTRUCTOR_NOT_FOUND));
+			}
+		}
 	}
 
 	@Test
