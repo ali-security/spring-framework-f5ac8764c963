@@ -16,18 +16,27 @@
 
 package org.springframework.expression.spel.standard;
 
+import java.util.Arrays;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 
 import org.springframework.core.Ordered;
+import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
 import org.springframework.expression.spel.SpelCompilationCoverageTests;
 import org.springframework.expression.spel.SpelCompilerMode;
+import org.springframework.expression.spel.SpelEvaluationException;
+import org.springframework.expression.spel.SpelMessage;
 import org.springframework.expression.spel.SpelParserConfiguration;
+import org.springframework.expression.spel.support.SimpleEvaluationContext;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+import static org.springframework.expression.spel.standard.SpelExpressionTestUtils.assertIsCompiled;
+import static org.springframework.expression.spel.standard.SpelExpressionTestUtils.assertIsNotCompiled;
+import static org.springframework.expression.spel.standard.SpelExpressionTestUtils.getInterpretedCount;
 
 /**
  * Tests for the {@link SpelCompiler}.
@@ -48,6 +57,7 @@ class SpelCompilerTests {
 
 		// Evaluate the expression multiple times to ensure that it gets compiled.
 		IntStream.rangeClosed(1, 5).forEach(i -> assertThat(expression.getValue(component)).isEqualTo(42));
+		assertIsCompiled(expression);
 	}
 
 	@Test  // gh-25706
@@ -75,12 +85,210 @@ class SpelCompilerTests {
 		assertThat(expression.getValue(context)).isEqualTo(true);
 	}
 
+	@Test
+	void simpleEvaluationContextBlocksCompilationByDefault() {
+		SpelParserConfiguration config = new SpelParserConfiguration(SpelCompilerMode.IMMEDIATE, null);
+		SpelExpressionParser parser = new SpelExpressionParser(config);
+		// "order" resides in the public Ordered interface and is therefore compilable,
+		// so any non-compilation is attributable solely to the context's policy.
+		Expression expression = parser.parseExpression("order");
+
+		SimpleEvaluationContext context = SimpleEvaluationContext.forReadOnlyDataBinding().build();
+		assertThat(context.isCompilationSupported()).isFalse();
+
+		// Evaluate the expression multiple times to ensure that it stays in interpreted mode,
+		// effectively overriding SpelCompilerMode.IMMEDIATE.
+		OrderedComponent component = new OrderedComponent();
+		IntStream.rangeClosed(1, 5).forEach(i -> assertThat(expression.getValue(context, component)).isEqualTo(42));
+		assertIsNotCompiled(expression);
+	}
+
+	@Test
+	void simpleEvaluationContextAllowsCompilationWhenSupported() {
+		SpelParserConfiguration config = new SpelParserConfiguration(SpelCompilerMode.IMMEDIATE, null);
+		SpelExpressionParser parser = new SpelExpressionParser(config);
+		// "order" resides in the public Ordered interface and is therefore compilable.
+		Expression expression = parser.parseExpression("order");
+
+		SimpleEvaluationContext context = SimpleEvaluationContext.forReadOnlyDataBinding()
+				.withCompilationSupported()
+				.build();
+		assertThat(context.isCompilationSupported()).isTrue();
+
+		// Two evaluations are enough for IMMEDIATE mode to compile.
+		OrderedComponent component = new OrderedComponent();
+		IntStream.rangeClosed(1, 2).forEach(i -> assertThat(expression.getValue(context, component)).isEqualTo(42));
+		assertIsCompiled(expression);
+	}
+
+	@Test
+	void simpleEvaluationContextIgnoresPrecompiledExpressionByDefault() {
+		SpelParserConfiguration config = new SpelParserConfiguration(SpelCompilerMode.IMMEDIATE, null);
+		SpelExpressionParser parser = new SpelExpressionParser(config);
+		// "order" resides in the public Ordered interface and is therefore compilable.
+		Expression expression = parser.parseExpression("order");
+
+		EvaluationContext standardContext = new StandardEvaluationContext();
+		assertThat(standardContext.isCompilationSupported()).isTrue();
+		OrderedComponent component = new OrderedComponent();
+		IntStream.rangeClosed(1, 2).forEach(i -> assertThat(expression.getValue(standardContext, component)).isEqualTo(42));
+		assertIsCompiled(expression);
+
+		// Switch to a SimpleEvaluationContext without opting into compilation — should
+		// fall back to interpreted evaluation even though compiledAst is non-null.
+		EvaluationContext simpleContext = SimpleEvaluationContext.forReadOnlyDataBinding().build();
+		assertThat(simpleContext.isCompilationSupported()).isFalse();
+
+		// Record interpretedCount before the simpleContext evaluation.
+		// checkCompile() — which increments interpretedCount as its very first action —
+		// is only reachable from the interpreted path. If the compiled path were taken
+		// instead, interpretedCount would not change.
+		int interpretedCountBefore = getInterpretedCount(expression);
+		assertThat(expression.getValue(simpleContext, component)).isEqualTo(42);
+		assertThat(getInterpretedCount(expression)).isEqualTo(interpretedCountBefore + 1);
+
+		// compiledAst is still set: the compiled expression was not cleared, rather merely ignored.
+		assertIsCompiled(expression);
+	}
+
+	/**
+	 * Verify that the four implicit {@link EvaluationContext} {@code getValue()} variants
+	 * in {@link SpelExpression} honor a {@link SimpleEvaluationContext} set as the default
+	 * context: compilation must be blocked even under {@link SpelCompilerMode#IMMEDIATE}.
+	 */
+	@Test
+	void simpleEvaluationContextSetAsDefaultBlocksCompilationForImplicitContextVariants() {
+		SpelParserConfiguration config = new SpelParserConfiguration(SpelCompilerMode.IMMEDIATE, null);
+		SpelExpressionParser parser = new SpelExpressionParser(config);
+		// "order" resides in the public Ordered interface and is therefore compilable,
+		// so any non-compilation is attributable solely to the context's policy.
+		SpelExpression expression = parser.parseRaw("order");
+
+		OrderedComponent component = new OrderedComponent();
+		SimpleEvaluationContext simpleContext = SimpleEvaluationContext.forReadOnlyDataBinding()
+				.withRootObject(component)
+				.build();
+		assertThat(simpleContext.isCompilationSupported()).isFalse();
+		expression.setEvaluationContext(simpleContext);
+
+		// Evaluate the expression multiple times using all four implicit context
+		// variants to ensure that they stay in interpreted mode.
+		for (int i = 0; i < 5; i++) {
+			assertThat(expression.getValue()).isEqualTo(42);
+			assertIsNotCompiled(expression);
+
+			assertThat(expression.getValue(Integer.class)).isEqualTo(42);
+			assertIsNotCompiled(expression);
+
+			assertThat(expression.getValue(component)).isEqualTo(42);
+			assertIsNotCompiled(expression);
+
+			assertThat(expression.getValue(component, Integer.class)).isEqualTo(42);
+			assertIsNotCompiled(expression);
+		}
+	}
+
+	/**
+	 * Verify that the four implicit {@link EvaluationContext} {@code getValue()} variants
+	 * in {@link SpelExpression} ignore a previously compiled expression when the default
+	 * context is a {@link SimpleEvaluationContext} (where {@code isCompilationSupported()}
+	 * returns {@code false}).
+	 */
+	@Test
+	void simpleEvaluationContextSetAsDefaultIgnoresPrecompiledExpressionForImplicitContextVariants() {
+		SpelParserConfiguration config = new SpelParserConfiguration(SpelCompilerMode.IMMEDIATE, null);
+		SpelExpressionParser parser = new SpelExpressionParser(config);
+		// "order" resides in the public Ordered interface and is therefore compilable.
+		SpelExpression expression = parser.parseRaw("order");
+
+		// Compile the expression via StandardEvaluationContext.
+		StandardEvaluationContext standardContext = new StandardEvaluationContext();
+		assertThat(standardContext.isCompilationSupported()).isTrue();
+		OrderedComponent component = new OrderedComponent();
+		IntStream.rangeClosed(1, 2).forEach(i ->
+				assertThat(expression.getValue(standardContext, component, Integer.class)).isEqualTo(42));
+		assertIsCompiled(expression);
+
+		// Switch to a SimpleEvaluationContext set as the default context — the precompiled
+		// expression should be ignored for all four implicit context getValue() variants.
+		SimpleEvaluationContext simpleContext = SimpleEvaluationContext.forReadOnlyDataBinding()
+				.withRootObject(component)
+				.build();
+		assertThat(simpleContext.isCompilationSupported()).isFalse();
+		expression.setEvaluationContext(simpleContext);
+
+		// Record interpretedCount before the simpleContext evaluations.
+		// checkCompile() — which increments interpretedCount as its very first action —
+		// is only reachable from the interpreted path. If the compiled path were taken
+		// instead, interpretedCount would not change.
+		int interpretedCountBefore = getInterpretedCount(expression);
+		assertThat(expression.getValue()).isEqualTo(42);
+		assertThat(getInterpretedCount(expression)).isEqualTo(interpretedCountBefore + 1);
+
+		interpretedCountBefore = getInterpretedCount(expression);
+		assertThat(expression.getValue(Integer.class)).isEqualTo(42);
+		assertThat(getInterpretedCount(expression)).isEqualTo(interpretedCountBefore + 1);
+
+		interpretedCountBefore = getInterpretedCount(expression);
+		assertThat(expression.getValue(component)).isEqualTo(42);
+		assertThat(getInterpretedCount(expression)).isEqualTo(interpretedCountBefore + 1);
+
+		interpretedCountBefore = getInterpretedCount(expression);
+		assertThat(expression.getValue(component, Integer.class)).isEqualTo(42);
+		assertThat(getInterpretedCount(expression)).isEqualTo(interpretedCountBefore + 1);
+
+		// compiledAst is still set: the compiled expression was not cleared, rather merely ignored.
+		assertIsCompiled(expression);
+	}
+
+	/**
+	 * Exploit-style regression test: with the compiler active, an expression evaluated
+	 * repeatedly within a {@link SimpleEvaluationContext} must not get compiled, since
+	 * compiled evaluation skips the guards enforced in interpreted mode &mdash; here the
+	 * maximum concatenated string length enforced by {@code OpPlus}.
+	 */
+	@Test
+	void simpleEvaluationContextEnforcesInterpretedGuardsWhenCompilerIsActive() {
+		SpelParserConfiguration config = new SpelParserConfiguration(SpelCompilerMode.IMMEDIATE, null);
+		SpelExpressionParser parser = new SpelExpressionParser(config);
+		Expression expression = parser.parseExpression("text + text");
+		SimpleEvaluationContext context = SimpleEvaluationContext.forReadOnlyDataBinding().build();
+
+		// Warm up with a short value: under IMMEDIATE mode this would compile the expression.
+		TextHolder shortText = new TextHolder("abc");
+		IntStream.rangeClosed(1, 5).forEach(i -> assertThat(expression.getValue(context, shortText)).isEqualTo("abcabc"));
+
+		// 60,000 + 60,000 characters exceeds the 100,000 character concatenation limit,
+		// which must still be enforced since the expression must remain interpreted.
+		char[] chars = new char[60_000];
+		Arrays.fill(chars, 'a');
+		TextHolder longText = new TextHolder(new String(chars));
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> expression.getValue(context, longText))
+				.satisfies(ex -> assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.MAX_CONCATENATED_STRING_LENGTH_EXCEEDED));
+		assertIsNotCompiled(expression);
+	}
+
 
 	static class OrderedComponent implements Ordered {
 
 		@Override
 		public int getOrder() {
 			return 42;
+		}
+	}
+
+
+	public static class TextHolder {
+
+		private final String text;
+
+		TextHolder(String text) {
+			this.text = text;
+		}
+
+		public String getText() {
+			return this.text;
 		}
 	}
 

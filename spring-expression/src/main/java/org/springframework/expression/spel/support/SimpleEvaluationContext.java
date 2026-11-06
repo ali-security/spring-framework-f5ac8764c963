@@ -107,14 +107,17 @@ public final class SimpleEvaluationContext implements EvaluationContext {
 
 	private final Map<String, Object> variables = new HashMap<>();
 
+	private final boolean compilationSupported;
+
 
 	private SimpleEvaluationContext(List<PropertyAccessor> accessors, List<MethodResolver> resolvers,
-			@Nullable TypeConverter converter, @Nullable TypedValue rootObject) {
+			@Nullable TypeConverter converter, @Nullable TypedValue rootObject, boolean compilationSupported) {
 
 		this.propertyAccessors = accessors;
 		this.methodResolvers = resolvers;
 		this.typeConverter = (converter != null ? converter : new StandardTypeConverter());
 		this.rootObject = (rootObject != null ? rootObject : TypedValue.NULL);
+		this.compilationSupported = compilationSupported;
 	}
 
 
@@ -211,6 +214,19 @@ public final class SimpleEvaluationContext implements EvaluationContext {
 		return this.variables.get(name);
 	}
 
+	/**
+	 * Determine if compilation is supported within expressions evaluated by this evaluation
+	 * context.
+	 * <p>By default, compilation is not supported in {@code SimpleEvaluationContext}.
+	 * @return {@code true} if compilation is supported; {@code false} otherwise
+	 * @since 7.0.9
+	 * @see Builder#withCompilationSupported()
+	 */
+	@Override
+	public boolean isCompilationSupported() {
+		return this.compilationSupported;
+	}
+
 
 	/**
 	 * Create a {@code SimpleEvaluationContext} for the specified {@link PropertyAccessor}
@@ -267,8 +283,26 @@ public final class SimpleEvaluationContext implements EvaluationContext {
 		@Nullable
 		private TypedValue rootObject;
 
+		private boolean compilationSupported = false;
+
 		public Builder(PropertyAccessor... accessors) {
 			this.accessors = Arrays.asList(accessors);
+		}
+
+		/**
+		 * Indicate that compilation is supported within expressions evaluated by this
+		 * evaluation context.
+		 * <p>By default, compilation is not supported in {@code SimpleEvaluationContext}.
+		 * Call this method to opt in to compilation &mdash; for example, when evaluating
+		 * trusted expressions where performance is critical.
+		 * <p><strong>WARNING</strong>: Opting in to compilation for expressions from
+		 * untrusted sources removes the safety guards supported in interpreted mode.
+		 * @since 7.0.9
+		 * @see SimpleEvaluationContext#isCompilationSupported()
+		 */
+		public Builder withCompilationSupported() {
+			this.compilationSupported = true;
+			return this;
 		}
 
 		/**
@@ -349,7 +383,8 @@ public final class SimpleEvaluationContext implements EvaluationContext {
 		}
 
 		public SimpleEvaluationContext build() {
-			return new SimpleEvaluationContext(this.accessors, this.resolvers, this.typeConverter, this.rootObject);
+			return new SimpleEvaluationContext(this.accessors, this.resolvers, this.typeConverter, this.rootObject,
+					this.compilationSupported);
 		}
 	}
 
