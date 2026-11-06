@@ -203,6 +203,26 @@ public class EvaluationTests extends AbstractExpressionTests {
 			.satisfies(ex -> assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.FLAWED_PATTERN));
 	}
 
+	@Test
+	void matchesWithPatternLengthThreshold() {
+		String pattern = String.format("^(%s|X)", repeat("12345", 199));
+		assertThat(pattern).hasSize(1000);
+		Expression expr = parser.parseExpression("'X' matches '" + pattern + "'");
+		assertThat(expr.getValue(context, Boolean.class)).isTrue();
+
+		pattern += "?";
+		assertThat(pattern).hasSize(1001);
+		evaluateAndCheckError("'abc' matches '" + pattern + "'", Boolean.class, SpelMessage.MAX_REGEX_LENGTH_EXCEEDED);
+	}
+
+	private String repeat(String str, int count) {
+		String result = "";
+		for (int i = 0; i < count; i++) {
+			result += str;
+		}
+		return result;
+	}
+
 	// mixing operators
 	@Test
 	public void testMixingOperators01() {
