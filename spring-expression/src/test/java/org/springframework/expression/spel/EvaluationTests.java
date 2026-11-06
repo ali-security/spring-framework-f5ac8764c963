@@ -394,6 +394,24 @@ public class EvaluationTests extends AbstractExpressionTests {
 		evaluateAndCheckError("'abc' matches '" + pattern + "'", Boolean.class, SpelMessage.MAX_REGEX_LENGTH_EXCEEDED);
 	}
 
+	@Test
+	void matchesWithPatternLengthThresholdForUnseenAndRepeatedEvaluation() {
+		String pattern = repeat("a", 1001);
+		Expression expr = parser.parseExpression("'abc' matches '" + pattern + "'");
+		// The regex has never been seen before: it must be rejected up front,
+		// before the pattern cache is consulted.
+		assertMaxRegexLengthExceeded(expr);
+		// And it must still be rejected on a repeated evaluation of the very same
+		// expression, which proves the oversized regex was never cached.
+		assertMaxRegexLengthExceeded(expr);
+	}
+
+	private void assertMaxRegexLengthExceeded(Expression expr) {
+		assertThatExceptionOfType(SpelEvaluationException.class)
+				.isThrownBy(() -> expr.getValue(context, Boolean.class))
+				.satisfies(ex -> assertThat(ex.getMessageCode()).isEqualTo(SpelMessage.MAX_REGEX_LENGTH_EXCEEDED));
+	}
+
 	// mixing operators
 	@Test
 	public void testMixingOperators01() {

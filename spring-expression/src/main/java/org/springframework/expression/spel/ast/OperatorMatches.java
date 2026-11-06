@@ -17,7 +17,11 @@
 package org.springframework.expression.spel.ast;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -27,6 +31,7 @@ import org.springframework.expression.spel.ExpressionState;
 import org.springframework.expression.spel.SpelEvaluationException;
 import org.springframework.expression.spel.SpelMessage;
 import org.springframework.expression.spel.support.BooleanTypedValue;
+import org.springframework.util.Assert;
 
 /**
  * Implements the matches operator. Matches takes two operands:
@@ -41,6 +46,11 @@ import org.springframework.expression.spel.support.BooleanTypedValue;
  */
 public class OperatorMatches extends Operator {
 
+	/**
+	 * Maximum number of compiled regular expressions in the pattern cache: {@value}.
+	 */
+	public static final int MAX_PATTERN_CACHE_SIZE = 256;
+
 	private static final int PATTERN_ACCESS_THRESHOLD = 1000000;
 
 	/**
@@ -49,7 +59,7 @@ public class OperatorMatches extends Operator {
 	 */
 	private static final int MAX_REGEX_LENGTH = 1000;
 
-	private final ConcurrentMap<String, Pattern> patternCache;
+	private final PatternCache patternCache;
 
 
 	/**
@@ -65,11 +75,16 @@ public class OperatorMatches extends Operator {
 
 	/**
 	 * Create a new {@link OperatorMatches} instance with a shared pattern cache.
+	 * <p>The supplied {@code patternCacheMap} is ignored: the operator always compiles
+	 * through its own pattern cache, bounded to {@value #MAX_PATTERN_CACHE_SIZE}
+	 * entries, so that an unbounded shared map cannot be grown without limit.
 	 * @since 5.2.23
 	 */
-	public OperatorMatches(ConcurrentMap<String, Pattern> patternCache, int startPos, int endPos, SpelNodeImpl... operands) {
+	public OperatorMatches(ConcurrentMap<String, Pattern> patternCacheMap,
+			int startPos, int endPos, SpelNodeImpl... operands) {
+
 		super("matches", startPos, endPos, operands);
-		this.patternCache = patternCache;
+		this.patternCache = new PatternCache(MAX_PATTERN_CACHE_SIZE, Pattern::compile);
 	}
 
 	/**
@@ -97,15 +112,14 @@ public class OperatorMatches extends Operator {
 					SpelMessage.INVALID_SECOND_OPERAND_FOR_MATCHES_OPERATOR, right);
 		}
 		String regex = (String) right;
+		if (regex.length() > MAX_REGEX_LENGTH) {
+			throw new SpelEvaluationException(getStartPosition(),
+					SpelMessage.MAX_REGEX_LENGTH_EXCEEDED, MAX_REGEX_LENGTH);
+		}
 
 		state.trackOperation();
 		try {
 			Pattern pattern = this.patternCache.get(regex);
-			if (pattern == null) {
-				checkRegexLength(regex);
-				pattern = Pattern.compile(regex);
-				this.patternCache.putIfAbsent(regex, pattern);
-			}
 			Matcher matcher = pattern.matcher(new MatcherInput(input, new AccessCount()));
 			return BooleanTypedValue.forValue(matcher.matches());
 		}
@@ -119,10 +133,85 @@ public class OperatorMatches extends Operator {
 		}
 	}
 
-	private void checkRegexLength(String regex) {
-		if (regex.length() > MAX_REGEX_LENGTH) {
-			throw new SpelEvaluationException(getStartPosition(),
-					SpelMessage.MAX_REGEX_LENGTH_EXCEEDED, MAX_REGEX_LENGTH);
+
+	/**
+	 * Simple LRU (Least Recently Used) cache of compiled regular expressions,
+	 * bounded by a maximum number of entries.
+	 * <p>Patterns that fail to compile are never admitted to the cache.
+	 */
+	private static class PatternCache {
+
+		private final int sizeLimit;
+
+		private final Function<String, Pattern> generator;
+
+		private final ConcurrentHashMap<String, Pattern> cache = new ConcurrentHashMap<>();
+
+		private final ConcurrentLinkedDeque<String> queue = new ConcurrentLinkedDeque<>();
+
+		private final ReadWriteLock lock = new ReentrantReadWriteLock();
+
+		private volatile int size;
+
+		public PatternCache(int sizeLimit, Function<String, Pattern> generator) {
+			Assert.isTrue(sizeLimit > 0, "Cache size limit must be positive");
+			Assert.notNull(generator, "Generator function must not be null");
+			this.sizeLimit = sizeLimit;
+			this.generator = generator;
+		}
+
+		public Pattern get(String key) {
+			Pattern cached = this.cache.get(key);
+			if (cached != null) {
+				if (this.size < this.sizeLimit) {
+					return cached;
+				}
+				this.lock.readLock().lock();
+				try {
+					if (this.queue.removeLastOccurrence(key)) {
+						this.queue.offer(key);
+					}
+					return cached;
+				}
+				finally {
+					this.lock.readLock().unlock();
+				}
+			}
+			this.lock.writeLock().lock();
+			try {
+				// Retrying in case of concurrent reads on the same key
+				cached = this.cache.get(key);
+				if (cached != null) {
+					if (this.queue.removeLastOccurrence(key)) {
+						this.queue.offer(key);
+					}
+					return cached;
+				}
+				// Generate value first, to prevent size inconsistency
+				// (and to keep patterns that fail to compile out of the cache)
+				Pattern value = this.generator.apply(key);
+				if (this.size == this.sizeLimit) {
+					String leastUsed = this.queue.poll();
+					if (leastUsed != null) {
+						this.cache.remove(leastUsed);
+					}
+				}
+				this.queue.offer(key);
+				this.cache.put(key, value);
+				this.size = this.cache.size();
+				return value;
+			}
+			finally {
+				this.lock.writeLock().unlock();
+			}
+		}
+
+		public int sizeLimit() {
+			return this.sizeLimit;
+		}
+
+		public int size() {
+			return this.size;
 		}
 	}
 
