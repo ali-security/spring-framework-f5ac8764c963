@@ -257,6 +257,10 @@ public enum SpelMessage {
 	FLAWED_PATTERN(Kind.ERROR, 1073,
 			"Failed to efficiently evaluate pattern ''{0}'': consider redesigning it"),
 
+	/** @since 5.2.20 */
+	MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED(Kind.ERROR, 1075,
+			"Array declares too many elements, exceeding the threshold of ''{0}''"),
+
 	/** @since 5.2.23 */
 	MAX_REPEATED_TEXT_SIZE_EXCEEDED(Kind.ERROR, 1076,
 			"Repeated text results in too many characters, exceeding the threshold of ''{0}''"),

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2019 the original author or authors.
+ * Copyright 2002-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Test construction of arrays.
  *
  * @author Andy Clement
+ * @author Sam Brannen
  */
 public class ArrayConstructorTests extends AbstractExpressionTests {
 
@@ -83,6 +84,32 @@ public class ArrayConstructorTests extends AbstractExpressionTests {
 		evaluateAndCheckError("new char[3]{'a','c','d','e'}", SpelMessage.INITIALIZER_LENGTH_INCORRECT);
 		evaluateAndCheckError("new char[2]{'hello','world'}", SpelMessage.TYPE_CONVERSION_ERROR);
 		evaluateAndCheckError("new String('a','c','d')", SpelMessage.CONSTRUCTOR_INVOCATION_PROBLEM);
+	}
+
+	@Test
+	public void createArrayWithTooManyElements() {
+		// one-dimensional: at the threshold
+		evaluateAndCheckError("new int[262144]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+		evaluateAndCheckError("new String[262144]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+		// one-dimensional: far beyond the threshold
+		evaluateAndCheckError("new int[2147483647]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+		evaluateAndCheckError("new long[1024 * 1024 * 1024]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+		// multi-dimensional: product of the dimensions at the threshold
+		evaluateAndCheckError("new int[512][512]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+		evaluateAndCheckError("new int[64][64][64]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+		// multi-dimensional: product of the dimensions far beyond the threshold
+		evaluateAndCheckError("new int[1024][1024][1024]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+		evaluateAndCheckError("new String[1024][1024][1024]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+		// multi-dimensional: product of the dimensions overflows int
+		evaluateAndCheckError("new int[65536][65536]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+		evaluateAndCheckError("new int[2][2147483647]", SpelMessage.MAX_ARRAY_ELEMENTS_THRESHOLD_EXCEEDED, 0, 262144);
+	}
+
+	@Test
+	public void createArrayJustBelowMaxElements() {
+		evaluate("new int[262143].length", 262143, Integer.class);
+		evaluate("new int[511][512].length", 511, Integer.class);
+		evaluate("new int[63][64][64].length", 63, Integer.class);
 	}
 
 	@Test
