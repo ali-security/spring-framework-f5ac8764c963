@@ -280,7 +280,12 @@ public enum SpelMessage {
 
 	/** @since 5.3.39 */
 	MAX_OPERATIONS_EXCEEDED(Kind.ERROR, 1085,
-			"SpEL expression evaluation exceeded the threshold of ''{0}'' operations");
+			"SpEL expression evaluation exceeded the threshold of ''{0}'' operations"),
+
+	/** @since 7.0.9 */
+	MAX_BIG_POWER_RESULT_EXCEEDED(Kind.ERROR, 1086,
+			"BigDecimal/BigInteger power operation with base bit length ''{0}'' and exponent ''{1}'' " +
+			"would produce a result exceeding the configured maximum of ''{2}'' bits");
 
 
 	private final Kind kind;

@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.core.SpringProperties;
@@ -557,6 +558,101 @@ public class EvaluationTests extends AbstractExpressionTests {
 	@Test
 	public void testAssignmentToVariables01() {
 		evaluate("#var1='value1'", "value1", String.class);
+	}
+
+	@Nested
+	class PowerOperatorTests {
+
+		private final EvaluationContext context = SimpleEvaluationContext.forReadOnlyDataBinding().build();
+
+		// Use a small limit (16 bits) to verify behavior in tests.
+		private static final int TEST_MAX_RESULT_BITS = 16;
+
+		private final SpelExpressionParser limitedParser = new SpelExpressionParser(
+				new SpelParserConfiguration(SpelCompilerMode.OFF, null, false, false,
+						0, 10, 10, TEST_MAX_RESULT_BITS));
+
+
+		@Test
+		void powerOperatorWithBigDecimal() {
+			context.setVariable("bd", BigDecimal.valueOf(2.0));
+			Expression expr = parser.parseExpression("#bd ^ 4");
+			assertThat(expr.getValue(context, BigDecimal.class)).isEqualByComparingTo("16");
+		}
+
+		@Test
+		void powerOperatorWithBigDecimalUnderResultLimit() {
+			// BigDecimal.valueOf(2.0).unscaledValue().bitLength() = 5
+			// 5 * 3 = 15 bits <= TEST_MAX_RESULT_BITS (16)
+			context.setVariable("bd", BigDecimal.valueOf(2.0));
+			Expression expr = limitedParser.parseExpression("#bd ^ 3");
+			assertThat(expr.getValue(context, BigDecimal.class)).isEqualByComparingTo("8");
+		}
+
+		@Test
+		void powerOperatorWithBigDecimalExceedingResultLimit() {
+			// 5 * 4 = 20 bits > TEST_MAX_RESULT_BITS (16)
+			context.setVariable("bd", BigDecimal.valueOf(2.0));
+			evaluateAndCheckError(limitedParser, context, "#bd ^ 4", BigDecimal.class,
+					SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+					4,  // power operator position
+					5,  // base bit length
+					4,  // exponent
+					TEST_MAX_RESULT_BITS);
+		}
+
+		@Test
+		void powerOperatorWithBigInteger() {
+			context.setVariable("bi", BigInteger.valueOf(2));
+			Expression expr = parser.parseExpression("#bi ^ 4");
+			assertThat(expr.getValue(context, BigInteger.class)).isEqualTo(BigInteger.valueOf(16));
+		}
+
+		@Test
+		void powerOperatorWithBigIntegerUnderResultLimit() {
+			// BigInteger.valueOf(2).bitLength() = 2
+			// 2 * 8 = 16 bits == TEST_MAX_RESULT_BITS (16)
+			context.setVariable("bi", BigInteger.valueOf(2));
+			Expression expr = limitedParser.parseExpression("#bi ^ 8");
+			assertThat(expr.getValue(context, BigInteger.class)).isEqualTo(BigInteger.valueOf(256));
+		}
+
+		@Test
+		void powerOperatorWithBigIntegerExceedingResultLimit() {
+			// 2 * 9 = 18 bits > TEST_MAX_RESULT_BITS (16)
+			context.setVariable("bi", BigInteger.valueOf(2));
+			evaluateAndCheckError(limitedParser, context, "#bi ^ 9", BigInteger.class,
+					SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+					4,  // power operator position
+					2,  // base bit length
+					9,  // exponent
+					TEST_MAX_RESULT_BITS);
+		}
+
+		@Test
+		void powerOperatorWithBigDecimalExceedingDefaultResultLimit() {
+			// 5 * 300_000 = 1_500_000 bits > DEFAULT_MAX_BIG_POWER_BITS (1_000_000)
+			context.setVariable("bd", BigDecimal.valueOf(2.0));
+			evaluateAndCheckError(context, "#bd ^ 300000", BigDecimal.class,
+					SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+					4,  // power operator position
+					5,  // base bit length
+					300_000,  // exponent
+					SpelParserConfiguration.DEFAULT_MAX_BIG_POWER_BITS);
+		}
+
+		@Test
+		void powerOperatorWithBigIntegerExceedingDefaultResultLimit() {
+			// 2 * 1_000_000 = 2_000_000 bits > DEFAULT_MAX_BIG_POWER_BITS (1_000_000)
+			context.setVariable("bi", BigInteger.valueOf(2));
+			evaluateAndCheckError(context, "#bi ^ 1000000", BigInteger.class,
+					SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+					4,  // power operator position
+					2,  // base bit length
+					1_000_000,  // exponent
+					SpelParserConfiguration.DEFAULT_MAX_BIG_POWER_BITS);
+		}
+
 	}
 
 	@Test

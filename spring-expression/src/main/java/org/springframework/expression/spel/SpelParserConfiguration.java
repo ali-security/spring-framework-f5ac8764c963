@@ -47,12 +47,38 @@ public class SpelParserConfiguration {
 	public static final int DEFAULT_MAX_OPERATIONS = 10_000;
 
 	/**
+	 * Default maximum number of bits permitted in the result of a
+	 * {@link java.math.BigDecimal} or {@link java.math.BigInteger} power operation
+	 * within a SpEL expression: {@value}.
+	 * <p>Approximately equivalent to a decimal number with 300,000 digits.
+	 * @since 7.0.9
+	 * @see #SPRING_EXPRESSION_MAX_BIG_POWER_BITS_PROPERTY_NAME
+	 */
+	public static final int DEFAULT_MAX_BIG_POWER_BITS = 1_000_000;
+
+	/**
 	 * System property to configure the default maximum number of operations permitted
 	 * during SpEL expression evaluation: {@value}.
 	 * @since 5.3.39
 	 * @see #DEFAULT_MAX_OPERATIONS
 	 */
 	public static final String SPRING_EXPRESSION_MAX_OPERATIONS_PROPERTY_NAME = "spring.expression.maxOperations";
+
+	/**
+	 * System property to configure the default maximum number of bits permitted in the
+	 * result of a {@link java.math.BigDecimal} or {@link java.math.BigInteger} power
+	 * operation within a SpEL expression: {@value}.
+	 * <p><strong>NOTE</strong>: Instead of relying on a global default, applications
+	 * and frameworks should ideally set an explicit custom value via the
+	 * {@link #SpelParserConfiguration(SpelCompilerMode, ClassLoader, boolean, boolean, int, int, int, int)}
+	 * constructor which provides complete configuration control and the ability
+	 * to override global defaults per use case.
+	 * <p>Can also be configured via the {@link SpringProperties} mechanism.
+	 * @since 7.0.9
+	 * @see #DEFAULT_MAX_BIG_POWER_BITS
+	 */
+	public static final String SPRING_EXPRESSION_MAX_BIG_POWER_BITS_PROPERTY_NAME =
+			"spring.expression.maxBigPowerBits";
 
 
 	private static final SpelCompilerMode defaultCompilerMode;
@@ -78,6 +104,8 @@ public class SpelParserConfiguration {
 	private final int maximumExpressionLength;
 
 	private final int maximumOperations;
+
+	private final int maximumBigPowerBits;
 
 
 	/**
@@ -163,14 +191,42 @@ public class SpelParserConfiguration {
 	 * @param maximumOperations the maximum number of operations permitted during
 	 * SpEL expression evaluation; must be a positive number
 	 * @since 5.3.39
+	 * @see #SPRING_EXPRESSION_MAX_BIG_POWER_BITS_PROPERTY_NAME
 	 */
 	public SpelParserConfiguration(SpelCompilerMode compilerMode, @Nullable ClassLoader compilerClassLoader,
 			boolean autoGrowNullReferences, boolean autoGrowCollections, int maximumAutoGrowSize, int maximumExpressionLength,
 			int maximumOperations) {
 
+		this(compilerMode, compilerClassLoader, autoGrowNullReferences, autoGrowCollections,
+				maximumAutoGrowSize, maximumExpressionLength, maximumOperations, retrieveMaxBigPowerBits());
+	}
+
+	/**
+	 * Create a new {@code SpelParserConfiguration} instance.
+	 * @param compilerMode the compiler mode that parsers using this configuration
+	 * should use; must not be {@code null}
+	 * @param compilerClassLoader the {@code ClassLoader} to use as the basis for
+	 * expression compilation; or {@code null} to use the default {@code ClassLoader}
+	 * @param autoGrowNullReferences if null references should automatically grow
+	 * @param autoGrowCollections if collections should automatically grow
+	 * @param maximumAutoGrowSize the maximum size to which a collection can auto grow
+	 * @param maximumExpressionLength the maximum length of a SpEL expression;
+	 * must be a positive number
+	 * @param maximumOperations the maximum number of operations permitted during
+	 * SpEL expression evaluation; must be a positive number
+	 * @param maximumBigPowerBits the maximum number of bits permitted in the
+	 * result of a {@link java.math.BigDecimal} or {@link java.math.BigInteger} power
+	 * operation; must be a positive number; use {@link Integer#MAX_VALUE} for no limit
+	 * @since 7.0.9
+	 */
+	public SpelParserConfiguration(SpelCompilerMode compilerMode, @Nullable ClassLoader compilerClassLoader,
+			boolean autoGrowNullReferences, boolean autoGrowCollections, int maximumAutoGrowSize, int maximumExpressionLength,
+			int maximumOperations, int maximumBigPowerBits) {
+
 		Assert.notNull(compilerMode, "'compilerMode' must not be null");
 		Assert.isTrue(maximumExpressionLength > 0, "'maximumExpressionLength' must be a positive number");
 		Assert.isTrue(maximumOperations > 0, "'maximumOperations' must be a positive number");
+		Assert.isTrue(maximumBigPowerBits > 0, "'maximumBigPowerBits' must be a positive number");
 
 		this.compilerMode = compilerMode;
 		this.compilerClassLoader = compilerClassLoader;
@@ -179,6 +235,7 @@ public class SpelParserConfiguration {
 		this.maximumAutoGrowSize = maximumAutoGrowSize;
 		this.maximumExpressionLength = maximumExpressionLength;
 		this.maximumOperations = maximumOperations;
+		this.maximumBigPowerBits = maximumBigPowerBits;
 	}
 
 
@@ -235,6 +292,15 @@ public class SpelParserConfiguration {
 		return this.maximumOperations;
 	}
 
+	/**
+	 * Return the maximum number of bits permitted in the result of a
+	 * {@link java.math.BigDecimal} or {@link java.math.BigInteger} power operation.
+	 * @since 7.0.9
+	 */
+	public int getMaximumBigPowerBits() {
+		return this.maximumBigPowerBits;
+	}
+
 
 	private static int retrieveMaxOperations() {
 		String value = SpringProperties.getProperty(SPRING_EXPRESSION_MAX_OPERATIONS_PROPERTY_NAME);
@@ -251,6 +317,24 @@ public class SpelParserConfiguration {
 		catch (NumberFormatException ex) {
 			throw new IllegalArgumentException("Failed to parse value for system property [" +
 					SPRING_EXPRESSION_MAX_OPERATIONS_PROPERTY_NAME + "]: " + ex.getMessage(), ex);
+		}
+	}
+
+	private static int retrieveMaxBigPowerBits() {
+		String value = SpringProperties.getProperty(SPRING_EXPRESSION_MAX_BIG_POWER_BITS_PROPERTY_NAME);
+		if (!StringUtils.hasText(value)) {
+			return DEFAULT_MAX_BIG_POWER_BITS;
+		}
+
+		try {
+			int maxBits = Integer.parseInt(value.trim());
+			Assert.isTrue(maxBits > 0, () -> "Value [" + maxBits + "] for system property [" +
+					SPRING_EXPRESSION_MAX_BIG_POWER_BITS_PROPERTY_NAME + "] must be positive");
+			return maxBits;
+		}
+		catch (NumberFormatException ex) {
+			throw new IllegalArgumentException("Failed to parse value for system property [" +
+					SPRING_EXPRESSION_MAX_BIG_POWER_BITS_PROPERTY_NAME + "]: " + ex.getMessage(), ex);
 		}
 	}
 
